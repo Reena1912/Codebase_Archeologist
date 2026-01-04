@@ -1,0 +1,52 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+env/
+.venv/
+.env/
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+*.egg
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Pytest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+archaeologist.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+temp_repo/
+outputs/
+
+# Environment variables
+.env
+.env.local
+
+# Model files (large)
+*.h5
+*.pkl
+*.model

@@ -1,0 +1,127 @@
+# Codebase Archaeologist Configuration
+# =====================================
+
+# Analysis Settings
+analysis:
+  # Languages to analyze
+  supported_languages:
+    - python
+    - javascript
+    - java
+  
+  # Directories to exclude from analysis
+  exclude_dirs:
+    - __pycache__
+    - .git
+    - .svn
+    - node_modules
+    - venv
+    - env
+    - .venv
+    - .env
+    - dist
+    - build
+    - .pytest_cache
+    - .mypy_cache
+    - .tox
+    - .eggs
+    - "*.egg-info"
+  
+  # File extensions to exclude
+  exclude_extensions:
+    - .pyc
+    - .pyo
+    - .pyd
+    - .so
+    - .dll
+    - .class
+    - .exe
+    - .obj
+    - .o
+  
+  # Maximum file size to analyze (in MB)
+  max_file_size_mb: 10
+
+# AI/ML Settings
+ai:
+  # Model for code embeddings
+  model_name: microsoft/codebert-base
+  
+  # Whether to use local model (requires transformers + torch)
+  use_local_model: false
+  
+  # Maximum token length for model input
+  max_token_length: 512
+  
+  # Batch size for processing
+  batch_size: 8
+
+# Code Quality Thresholds
+quality:
+  # Maximum cyclomatic complexity before flagging
+  max_complexity: 10
+  
+  # Maximum function length (lines) before flagging
+  max_function_length: 50
+  
+  # Maximum class length (lines) before flagging
+  max_class_length: 300
+  
+  # Maximum parameters before flagging
+  max_parameters: 5
+  
+  # Threshold for duplicate detection (0.0-1.0)
+  duplicate_threshold: 0.8
+  
+  # Minimum maintainability index
+  min_maintainability: 10
+
+# Output Settings
+output:
+  # Base directory for all outputs
+  base_dir: ./outputs
+  
+  # Report format (markdown, html, both)
+  report_format: both
+  
+  # Generate visualizations
+  generate_visualizations: true
+  
+  # Generate JSON export
+  generate_json: true
+
+# Logging Settings
+logging:
+  # Log level (DEBUG, INFO, WARNING, ERROR)
+  level: INFO
+  
+  # Log file path
+  file: archaeologist.log
+  
+  # Maximum log file size (MB) before rotation
+  max_size_mb: 10
+  
+  # Number of backup log files to keep
+  backup_count: 3
+
+# Web Interface Settings
+web:
+  # Port for Streamlit app
+  port: 8501
+  
+  # Enable dark mode
+  dark_mode: false
+  
+  # Maximum files to display
+  max_display_files: 50
+
+# GitHub Integration
+github:
+  # Temporary directory for cloned repos
+  temp_dir: ./temp_repo
+  
+  # Clone depth (1 for shallow clone)
+  clone_depth: 1
+  
+  # Clean up after analysis
+  cleanup_after_analysis: true
