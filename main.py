@@ -31,9 +31,15 @@ class CodebaseArchaeologist:
     6. Create visualizations and reports
     """
     
-    def __init__(self, config_path: str = "config.yaml"):
-        """Initialize archaeologist with configuration"""
+    def __init__(self, config_path: str = "config.yaml", save_to_disk: bool = True):
+        """Initialize archaeologist with configuration
+        
+        Args:
+            config_path: Path to configuration file
+            save_to_disk: If False, results are kept in memory only (for Streamlit dashboard)
+        """
         self.config = load_config(config_path)
+        self.save_to_disk = save_to_disk
         
         # Setup logging
         log_level = self.config.get('logging', {}).get('level', 'INFO')
@@ -48,8 +54,11 @@ class CodebaseArchaeologist:
         self.smell_detector = CodeSmellDetector(self.config)
         self.summarizer = CodeSummarizer(self.config)
         
-        # Create output directory
-        self.output_dir = create_output_dir(self.config['output']['base_dir'])
+        # Create output directory only if saving to disk
+        if self.save_to_disk:
+            self.output_dir = create_output_dir(self.config['output']['base_dir'])
+        else:
+            self.output_dir = None
         
         logger.info("🏛️  Codebase Archaeologist initialized")
     
@@ -109,11 +118,12 @@ class CodebaseArchaeologist:
             'summary': self._generate_summary(all_parsed, dependency_data, repo_complexity)
         }
         
-        # Step 7: Save results
-        self._save_results(results)
+        # Step 7: Save results (only if save_to_disk is enabled)
+        if self.save_to_disk:
+            self._save_results(results)
+            logger.info(f"📄 Results saved to: {self.output_dir}")
         
         logger.info(f"✅ Analysis complete in {results['metadata']['analysis_time_seconds']}s")
-        logger.info(f"📄 Results saved to: {self.output_dir}")
         
         return results
     

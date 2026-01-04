@@ -7,12 +7,28 @@ import streamlit as st
 import sys
 import json
 from pathlib import Path
+import io
 
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from main import CodebaseArchaeologist
 from src.utils.logger import logger
+
+# Try to import visualization libraries
+try:
+    import plotly.express as px
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+    HAS_PLOTLY = True
+except ImportError:
+    HAS_PLOTLY = False
+
+try:
+    import pandas as pd
+    HAS_PANDAS = True
+except ImportError:
+    HAS_PANDAS = False
 
 # Page config
 st.set_page_config(
@@ -122,7 +138,8 @@ def main():
         # Initialize archaeologist
         try:
             with st.spinner("🔧 Initializing analysis engine..."):
-                archaeologist = CodebaseArchaeologist()
+                # Use save_to_disk=False to keep everything in memory
+                archaeologist = CodebaseArchaeologist(save_to_disk=False)
             
             # Run analysis
             with st.spinner(f"📊 Analyzing codebase at: {path}"):
@@ -137,6 +154,29 @@ def main():
             
             # Display results
             display_results(results)
+            
+        except RuntimeError as e:
+            # Handle specific errors with detailed messages
+            error_msg = str(e)
+            st.error(f"❌ {error_msg}")
+            
+            # Show additional help for common issues
+            if "access denied" in error_msg.lower() or "authentication" in error_msg.lower():
+                st.warning("""
+                **💡 Tips for private repositories:**
+                1. Make sure you have Git installed and configured
+                2. For private repos, use SSH URL format: `git@github.com:username/repo.git`
+                3. Ensure your SSH keys are set up: `ssh -T git@github.com`
+                4. Or configure Git credentials: `git config --global credential.helper store`
+                """)
+            elif "not found" in error_msg.lower():
+                st.warning("""
+                **💡 Repository not found - please check:**
+                1. The URL is correct and complete
+                2. The repository exists on GitHub
+                3. You have access if it's a private repository
+                """)
+            logger.error(f"Dashboard error: {e}")
             
         except Exception as e:
             st.error(f"❌ Error: {str(e)}")
@@ -197,30 +237,420 @@ def display_results(results: dict):
     # Success message
     st.success(f"✅ Analysis completed in {metadata.get('analysis_time_seconds', 0):.2f}s")
     
-    # Tabs
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "📊 Overview", "📁 Files", "🔗 Dependencies", "🔍 Code Smells", "💾 Export"
+    # Tabs - Added Visualizations tab
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        "📊 Overview", "📈 Visualizations", "📁 Files", "🔗 Dependencies", "🔍 Code Smells", "💾 Export"
     ])
     
     # Tab 1: Overview
     with tab1:
         display_overview(summary, metadata)
     
-    # Tab 2: Files
+    # Tab 2: Visualizations (in-memory charts)
     with tab2:
+        display_visualizations(results)
+    
+    # Tab 3: Files
+    with tab3:
         display_files(results.get('files', []))
     
-    # Tab 3: Dependencies
-    with tab3:
+    # Tab 4: Dependencies
+    with tab4:
         display_dependencies(results.get('dependencies', {}))
     
-    # Tab 4: Code Smells
-    with tab4:
+    # Tab 5: Code Smells
+    with tab5:
         display_code_smells(results.get('files', []))
     
-    # Tab 5: Export
-    with tab5:
+    # Tab 6: Export
+    with tab6:
         display_export(results)
+
+
+def display_visualizations(results: dict):
+    """Display interactive visualizations (in-memory, no file saving)"""
+    
+    st.header("📈 Interactive Visualizations")
+    
+    if not HAS_PLOTLY:
+        st.warning("📦 Plotly is not installed. Install it with: `pip install plotly`")
+        return
+    
+    if not HAS_PANDAS:
+        st.warning("📦 Pandas is not installed. Install it with: `pip install pandas`")
+        return
+    
+    files = results.get('files', [])
+    summary = results.get('summary', {})
+    dependencies = results.get('dependencies', {})
+    
+    # Sub-tabs for different visualizations
+    viz_tab1, viz_tab2, viz_tab3, viz_tab4 = st.tabs([
+        "📊 Complexity Charts", "📈 Metrics Dashboard", "🔗 Dependency Graph", "📁 File Analysis"
+    ])
+    
+    with viz_tab1:
+        display_complexity_charts(files)
+    
+    with viz_tab2:
+        display_metrics_dashboard(summary)
+    
+    with viz_tab3:
+        display_dependency_visualization(dependencies)
+    
+    with viz_tab4:
+        display_file_analysis_charts(files)
+
+
+def display_complexity_charts(files: list):
+    """Display complexity-related charts"""
+    
+    st.subheader("🎯 Function Complexity Analysis")
+    
+    # Collect function data
+    func_data = []
+    for f in files[:30]:  # Limit for performance
+        filepath = f.get('filepath', 'unknown')
+        file_name = Path(filepath).name
+        complexity_info = f.get('complexity', {})
+        functions = complexity_info.get('cyclomatic_complexity', {}).get('functions', [])
+        
+        for func in functions:
+            func_data.append({
+                'File': file_name,
+                'Function': func.get('name', 'unknown'),
+                'Complexity': func.get('complexity', 0),
+                'Lines': func.get('lines', 0)
+            })
+    
+    if not func_data:
+        st.info("No function data available for visualization")
+        return
+    
+    df = pd.DataFrame(func_data)
+    
+    # Complexity scatter plot
+    fig = px.scatter(
+        df,
+        x='File',
+        y='Function',
+        size='Complexity',
+        color='Complexity',
+        color_continuous_scale=['green', 'yellow', 'orange', 'red'],
+        title='Function Complexity Heatmap',
+        hover_data=['Complexity', 'Lines']
+    )
+    fig.update_layout(
+        xaxis_tickangle=-45,
+        height=500
+    )
+    st.plotly_chart(fig, use_container_width=True)
+    
+    # Complexity distribution histogram
+    st.subheader("📊 Complexity Distribution")
+    fig2 = px.histogram(
+        df,
+        x='Complexity',
+        nbins=20,
+        title='Distribution of Function Complexity',
+        color_discrete_sequence=['#3498db']
+    )
+    fig2.add_vline(x=10, line_dash="dash", line_color="red", 
+                   annotation_text="High complexity threshold")
+    st.plotly_chart(fig2, use_container_width=True)
+    
+    # Top complex functions bar chart
+    st.subheader("⚠️ Most Complex Functions")
+    top_complex = df.nlargest(10, 'Complexity')
+    fig3 = px.bar(
+        top_complex,
+        x='Complexity',
+        y='Function',
+        orientation='h',
+        color='Complexity',
+        color_continuous_scale=['green', 'yellow', 'orange', 'red'],
+        title='Top 10 Most Complex Functions'
+    )
+    fig3.update_layout(yaxis={'categoryorder': 'total ascending'})
+    st.plotly_chart(fig3, use_container_width=True)
+
+
+def display_metrics_dashboard(summary: dict):
+    """Display metrics dashboard with gauges and charts"""
+    
+    st.subheader("📈 Quality Metrics Dashboard")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # Maintainability gauge
+        mi = summary.get('average_maintainability', 0)
+        fig = go.Figure(go.Indicator(
+            mode="gauge+number+delta",
+            value=mi,
+            title={'text': "Maintainability Index"},
+            delta={'reference': 20, 'increasing': {'color': "green"}},
+            gauge={
+                'axis': {'range': [0, 100]},
+                'bar': {'color': "#3498db"},
+                'steps': [
+                    {'range': [0, 10], 'color': "#e74c3c"},
+                    {'range': [10, 20], 'color': "#f39c12"},
+                    {'range': [20, 100], 'color': "#27ae60"}
+                ],
+                'threshold': {
+                    'line': {'color': "black", 'width': 4},
+                    'thickness': 0.75,
+                    'value': mi
+                }
+            }
+        ))
+        fig.update_layout(height=300)
+        st.plotly_chart(fig, use_container_width=True)
+    
+    with col2:
+        # Complexity gauge
+        complexity = summary.get('average_complexity', 0)
+        fig2 = go.Figure(go.Indicator(
+            mode="gauge+number+delta",
+            value=complexity,
+            title={'text': "Average Complexity"},
+            delta={'reference': 10, 'decreasing': {'color': "green"}},
+            gauge={
+                'axis': {'range': [0, 30]},
+                'bar': {'color': "#3498db"},
+                'steps': [
+                    {'range': [0, 5], 'color': "#27ae60"},
+                    {'range': [5, 10], 'color': "#f39c12"},
+                    {'range': [10, 30], 'color': "#e74c3c"}
+                ],
+                'threshold': {
+                    'line': {'color': "black", 'width': 4},
+                    'thickness': 0.75,
+                    'value': complexity
+                }
+            }
+        ))
+        fig2.update_layout(height=300)
+        st.plotly_chart(fig2, use_container_width=True)
+    
+    # Code statistics bar chart
+    st.subheader("📊 Code Statistics")
+    stats_data = {
+        'Metric': ['Functions', 'Classes', 'Code Smells', 'Lines (÷100)'],
+        'Value': [
+            summary.get('total_functions', 0),
+            summary.get('total_classes', 0),
+            summary.get('total_code_smells', 0),
+            summary.get('total_lines_of_code', 0) / 100
+        ]
+    }
+    fig3 = px.bar(
+        stats_data,
+        x='Metric',
+        y='Value',
+        color='Metric',
+        title='Codebase Statistics'
+    )
+    st.plotly_chart(fig3, use_container_width=True)
+
+
+def display_dependency_visualization(dependencies: dict):
+    """Display dependency network visualization"""
+    
+    st.subheader("🔗 Dependency Network")
+    
+    if not dependencies:
+        st.info("No dependency data available")
+        return
+    
+    graph_data = dependencies.get('graph_data', {})
+    nodes = graph_data.get('nodes', [])
+    edges = graph_data.get('edges', [])
+    
+    if not nodes:
+        st.info("No dependency graph data available")
+        return
+    
+    # Create network visualization using Plotly
+    import networkx as nx
+    
+    G = nx.DiGraph()
+    for node in nodes:
+        G.add_node(node)
+    for edge in edges:
+        G.add_edge(edge['source'], edge['target'])
+    
+    # Limit nodes for readability
+    if len(G.nodes()) > 40:
+        st.warning(f"Graph has {len(G.nodes())} nodes, showing top 40 by connections")
+        degrees = dict(G.degree())
+        top_nodes = sorted(degrees.items(), key=lambda x: x[1], reverse=True)[:40]
+        nodes_to_show = [node for node, _ in top_nodes]
+        G = G.subgraph(nodes_to_show)
+    
+    if len(G.nodes()) == 0:
+        st.info("No dependencies to visualize")
+        return
+    
+    # Get positions using spring layout
+    pos = nx.spring_layout(G, k=2, iterations=50)
+    
+    # Create edge traces
+    edge_x, edge_y = [], []
+    for edge in G.edges():
+        x0, y0 = pos[edge[0]]
+        x1, y1 = pos[edge[1]]
+        edge_x.extend([x0, x1, None])
+        edge_y.extend([y0, y1, None])
+    
+    edge_trace = go.Scatter(
+        x=edge_x, y=edge_y,
+        line=dict(width=0.5, color='#888'),
+        hoverinfo='none',
+        mode='lines'
+    )
+    
+    # Create node traces
+    node_x = [pos[node][0] for node in G.nodes()]
+    node_y = [pos[node][1] for node in G.nodes()]
+    node_text = [Path(node).name for node in G.nodes()]
+    node_degrees = [G.degree(node) for node in G.nodes()]
+    
+    node_trace = go.Scatter(
+        x=node_x, y=node_y,
+        mode='markers+text',
+        hoverinfo='text',
+        text=node_text,
+        textposition='top center',
+        textfont=dict(size=8),
+        marker=dict(
+            showscale=True,
+            colorscale='YlOrRd',
+            size=[10 + d * 3 for d in node_degrees],
+            color=node_degrees,
+            colorbar=dict(
+                title='Connections',
+                thickness=15
+            )
+        )
+    )
+    
+    fig = go.Figure(data=[edge_trace, node_trace],
+                   layout=go.Layout(
+                       title='File Dependency Network',
+                       showlegend=False,
+                       hovermode='closest',
+                       xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                       yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                       height=600
+                   ))
+    
+    st.plotly_chart(fig, use_container_width=True)
+    
+    # Dependency statistics
+    analysis = dependencies.get('analysis', {})
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.metric("Total Nodes", len(nodes))
+        st.metric("Total Edges", len(edges))
+    
+    with col2:
+        circular = analysis.get('has_circular_dependencies', False)
+        if circular:
+            st.error("⚠️ Circular dependencies detected!")
+        else:
+            st.success("✅ No circular dependencies")
+
+
+def display_file_analysis_charts(files: list):
+    """Display file-level analysis charts"""
+    
+    st.subheader("📁 File Analysis Charts")
+    
+    if not files:
+        st.info("No file data available")
+        return
+    
+    # Collect file data
+    file_data = []
+    for f in files:
+        filepath = f.get('filepath', 'unknown')
+        file_info = f.get('file_info', {})
+        complexity_info = f.get('complexity', {})
+        smells = f.get('code_smells', {})
+        
+        file_data.append({
+            'File': Path(filepath).name,
+            'Lines': file_info.get('lines', 0),
+            'Complexity': complexity_info.get('cyclomatic_complexity', {}).get('average', 0),
+            'Functions': len(f.get('functions', [])),
+            'Classes': len(f.get('classes', [])),
+            'Code Smells': smells.get('total_smell_count', 0)
+        })
+    
+    df = pd.DataFrame(file_data)
+    
+    # File size treemap
+    st.subheader("📊 File Size Distribution")
+    fig = px.treemap(
+        df,
+        path=['File'],
+        values='Lines',
+        color='Complexity',
+        color_continuous_scale=['green', 'yellow', 'orange', 'red'],
+        title='File Size by Lines of Code (colored by complexity)'
+    )
+    st.plotly_chart(fig, use_container_width=True)
+    
+    # Scatter plot: Lines vs Complexity
+    st.subheader("📈 Lines vs Complexity")
+    fig2 = px.scatter(
+        df,
+        x='Lines',
+        y='Complexity',
+        size='Functions',
+        color='Code Smells',
+        hover_name='File',
+        color_continuous_scale=['green', 'yellow', 'red'],
+        title='File Complexity vs Size (bubble size = functions)'
+    )
+    st.plotly_chart(fig2, use_container_width=True)
+    
+    # Top files by various metrics
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("📏 Largest Files")
+        top_lines = df.nlargest(10, 'Lines')
+        fig3 = px.bar(
+            top_lines,
+            x='Lines',
+            y='File',
+            orientation='h',
+            title='Top 10 Largest Files',
+            color='Lines',
+            color_continuous_scale='Blues'
+        )
+        fig3.update_layout(yaxis={'categoryorder': 'total ascending'})
+        st.plotly_chart(fig3, use_container_width=True)
+    
+    with col2:
+        st.subheader("🔍 Most Code Smells")
+        top_smells = df.nlargest(10, 'Code Smells')
+        fig4 = px.bar(
+            top_smells,
+            x='Code Smells',
+            y='File',
+            orientation='h',
+            title='Top 10 Files with Most Code Smells',
+            color='Code Smells',
+            color_continuous_scale='Reds'
+        )
+        fig4.update_layout(yaxis={'categoryorder': 'total ascending'})
+        st.plotly_chart(fig4, use_container_width=True)
+
 
 def display_overview(summary: dict, metadata: dict):
     """Display overview tab"""
@@ -535,13 +965,13 @@ def display_export(results: dict):
     
     st.markdown("---")
     
-    # Show file locations
-    st.info("""
-    **Full reports saved to:**
-    - JSON: `outputs/reports/analysis_results.json`
-    - Markdown: `outputs/reports/analysis_report.md`
-    - HTML: `outputs/reports/analysis_report.html`
-    - Graphs: `outputs/graphs/`
+    # Info about in-memory operation
+    st.success("""
+    ✨ **In-Memory Analysis Mode**
+    
+    All analysis results and visualizations are generated in-memory. 
+    Nothing is saved to your disk unless you download the reports above.
+    When you close this dashboard, all data will be cleared.
     """)
 
 def generate_summary_text(results: dict) -> str:

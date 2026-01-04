@@ -4,11 +4,13 @@ Loads codebase from local directory or GitHub repository
 """
 
 import os
+import re
 import shutil
+import subprocess
 from pathlib import Path
 from typing import List, Dict, Optional
 from git import Repo
-from git.exc import GitCommandError
+from git.exc import GitCommandError, InvalidGitRepositoryError
 from src.utils.logger import logger
 from src.utils.helpers import is_binary_file, format_bytes
 
@@ -63,13 +65,38 @@ class CodeLoader:
         """
         logger.info(f"Cloning repository: {repo_url}")
         
+        # Validate and normalize the GitHub URL
+        repo_url = self._normalize_github_url(repo_url)
+        
         # Clean up existing directory
         if Path(local_path).exists():
-            shutil.rmtree(local_path)
+            try:
+                shutil.rmtree(local_path)
+            except PermissionError as e:
+                logger.error(f"Cannot remove existing temp directory: {e}")
+                # Try alternative path
+                local_path = f"./temp_repo_{os.getpid()}"
+                logger.info(f"Using alternative path: {local_path}")
         
         try:
-            # Clone repository
-            Repo.clone_from(repo_url, local_path, depth=1)
+            # First check if git is available
+            self._check_git_available()
+            
+            # Clone repository with explicit configuration
+            logger.info("Starting repository clone (this may take a moment)...")
+            
+            # Use subprocess for better error handling
+            result = subprocess.run(
+                ['git', 'clone', '--depth', '1', repo_url, local_path],
+                capture_output=True,
+                text=True,
+                timeout=300  # 5 minute timeout
+            )
+            
+            if result.returncode != 0:
+                error_msg = result.stderr.strip()
+                raise GitCommandError('clone', error_msg)
+            
             logger.info("Repository cloned successfully")
             
             # Load files
@@ -79,9 +106,115 @@ class CodeLoader:
             
             return result
             
+        except subprocess.TimeoutExpired:
+            logger.error("Repository clone timed out. The repository may be too large or network is slow.")
+            raise RuntimeError("Clone operation timed out after 5 minutes")
+            
+        except FileNotFoundError:
+            logger.error("Git is not installed or not in PATH")
+            raise RuntimeError(
+                "Git is not installed or not found in PATH.\n"
+                "Please install Git from https://git-scm.com/downloads and ensure it's in your PATH."
+            )
+            
         except GitCommandError as e:
-            logger.error(f"Failed to clone repository: {e}")
-            raise
+            error_str = str(e).lower()
+            
+            if 'authentication' in error_str or 'access denied' in error_str or 'permission denied' in error_str:
+                logger.error("Authentication failed - repository may be private")
+                raise RuntimeError(
+                    f"Access denied to repository: {repo_url}\n\n"
+                    "This could be because:\n"
+                    "1. The repository is private and requires authentication\n"
+                    "2. The repository URL is incorrect\n"
+                    "3. Your Git credentials are not configured\n\n"
+                    "For private repos, try:\n"
+                    "- Use SSH URL: git@github.com:username/repo.git\n"
+                    "- Or configure Git credentials: git config --global credential.helper store"
+                )
+            elif 'not found' in error_str or 'does not exist' in error_str or 'repository not found' in error_str:
+                logger.error("Repository not found")
+                raise RuntimeError(
+                    f"Repository not found: {repo_url}\n\n"
+                    "Please check:\n"
+                    "1. The repository URL is correct\n"
+                    "2. The repository exists and is accessible\n"
+                    "3. If private, ensure you have access permissions"
+                )
+            elif 'could not resolve host' in error_str or 'unable to access' in error_str:
+                logger.error("Network error - cannot reach GitHub")
+                raise RuntimeError(
+                    f"Cannot connect to GitHub: {repo_url}\n\n"
+                    "Please check:\n"
+                    "1. Your internet connection\n"
+                    "2. GitHub.com is accessible\n"
+                    "3. No firewall/proxy is blocking the connection"
+                )
+            else:
+                logger.error(f"Failed to clone repository: {e}")
+                raise RuntimeError(f"Failed to clone repository: {e}")
+    
+    def _normalize_github_url(self, url: str) -> str:
+        """
+        Normalize GitHub URL to ensure it's valid for cloning
+        
+        Args:
+            url: Raw GitHub URL
+            
+        Returns:
+            Normalized URL ready for cloning
+        """
+        url = url.strip()
+        
+        # Handle common URL patterns
+        # Pattern 1: https://github.com/user/repo (missing .git)
+        # Pattern 2: https://github.com/user/repo.git (correct)
+        # Pattern 3: github.com/user/repo (missing https://)
+        # Pattern 4: https://github.com/user/repo/tree/branch (has branch path)
+        # Pattern 5: git@github.com:user/repo.git (SSH - keep as is)
+        
+        # If SSH URL, return as is
+        if url.startswith('git@'):
+            return url
+        
+        # Remove trailing slashes
+        url = url.rstrip('/')
+        
+        # Add https:// if missing
+        if url.startswith('github.com'):
+            url = 'https://' + url
+        
+        # Remove tree/branch paths (e.g., /tree/main, /tree/master, /tree/branch-name)
+        url = re.sub(r'/tree/[^/]+.*$', '', url)
+        
+        # Remove blob paths (e.g., /blob/main/file.py)
+        url = re.sub(r'/blob/[^/]+.*$', '', url)
+        
+        # Remove /pulls, /issues, /actions etc.
+        url = re.sub(r'/(pulls|issues|actions|wiki|projects|releases|tags|commits).*$', '', url)
+        
+        # Add .git if missing (for HTTPS URLs)
+        if url.startswith('https://') and not url.endswith('.git'):
+            url = url + '.git'
+        
+        logger.debug(f"Normalized URL: {url}")
+        return url
+    
+    def _check_git_available(self) -> None:
+        """Check if Git is installed and accessible"""
+        try:
+            result = subprocess.run(
+                ['git', '--version'],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            if result.returncode == 0:
+                logger.debug(f"Git found: {result.stdout.strip()}")
+            else:
+                raise FileNotFoundError("Git not found")
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            raise FileNotFoundError("Git is not installed or not in PATH")
     
     def _scan_directory(self, root_path: Path) -> List[Dict]:
         """
