@@ -5,8 +5,10 @@ Loads codebase from local directory or GitHub repository
 
 import os
 import re
+import stat
 import shutil
 import subprocess
+import uuid
 from pathlib import Path
 from typing import List, Dict, Optional
 from git import Repo
@@ -69,14 +71,7 @@ class CodeLoader:
         repo_url = self._normalize_github_url(repo_url)
         
         # Clean up existing directory
-        if Path(local_path).exists():
-            try:
-                shutil.rmtree(local_path)
-            except PermissionError as e:
-                logger.error(f"Cannot remove existing temp directory: {e}")
-                # Try alternative path
-                local_path = f"./temp_repo_{os.getpid()}"
-                logger.info(f"Using alternative path: {local_path}")
+        local_path = self._ensure_clean_dir(local_path)
         
         try:
             # First check if git is available
@@ -154,6 +149,52 @@ class CodeLoader:
                 logger.error(f"Failed to clone repository: {e}")
                 raise RuntimeError(f"Failed to clone repository: {e}")
     
+    @staticmethod
+    def _force_rmtree(path: str) -> None:
+        """Remove a directory tree, handling read-only .git files on Windows."""
+        def _on_rm_error(_func, _path, _exc_info):
+            # Clear the read-only flag and retry
+            try:
+                os.chmod(_path, stat.S_IWRITE)
+                os.unlink(_path)
+            except Exception:
+                pass
+
+        shutil.rmtree(path, onerror=_on_rm_error)
+
+    def _ensure_clean_dir(self, local_path: str) -> str:
+        """
+        Make sure the target directory does not exist before cloning.
+        Falls back to alternative names if deletion is impossible.
+        """
+        if not Path(local_path).exists():
+            return local_path
+
+        # Try force-removing (handles read-only .git objects)
+        try:
+            self._force_rmtree(local_path)
+            logger.info(f"Cleaned up existing directory: {local_path}")
+            return local_path
+        except Exception as e:
+            logger.warning(f"Cannot remove {local_path}: {e}")
+
+        # Try PID-based alternative
+        alt_path = f"./temp_repo_{os.getpid()}"
+        if Path(alt_path).exists():
+            try:
+                self._force_rmtree(alt_path)
+                logger.info(f"Cleaned up existing directory: {alt_path}")
+                return alt_path
+            except Exception as e2:
+                logger.warning(f"Cannot remove {alt_path}: {e2}")
+        else:
+            return alt_path
+
+        # Last resort: unique name guaranteed not to exist
+        unique_path = f"./temp_repo_{uuid.uuid4().hex[:8]}"
+        logger.info(f"Using unique temp path: {unique_path}")
+        return unique_path
+
     def _normalize_github_url(self, url: str) -> str:
         """
         Normalize GitHub URL to ensure it's valid for cloning
